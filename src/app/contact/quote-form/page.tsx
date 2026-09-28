@@ -8,6 +8,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { z } from "zod";
 import PillarNav, { Breadcrumbs } from "@/components/PillarNav";
 import Footer from "@/components/Footer";
+import { submitLeadRequest } from "@/lib/submitLead";
+import { useLeadTracking } from "@/lib/useLeadTracking";
 import {
   ChevronRight,
   ChevronLeft,
@@ -33,6 +35,8 @@ const quoteSchema = z.object({
   address: z.string().min(5, "Please enter your full address").max(200, "Address must be less than 200 characters"),
   description: z.string().min(10, "Please describe your issue in at least 10 characters"),
   gdprConsent: z.literal(true, { errorMap: () => ({ message: "You must consent to proceed" }) }),
+  // Hidden anti-spam honeypot. Must stay empty on a genuine submission.
+  website: z.string().optional(),
 });
 
 type QuoteFormData = z.infer<typeof quoteSchema>;
@@ -61,10 +65,12 @@ export default function QuoteFormPage() {
   const [step, setStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const tracking = useLeadTracking();
 
-  const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm<QuoteFormData>({
+  const { register, handleSubmit, watch, setValue, setError, formState: { errors } } = useForm<QuoteFormData>({
     resolver: zodResolver(quoteSchema),
-    defaultValues: { disrepairIssues: [] },
+    defaultValues: { disrepairIssues: [], website: "" },
   });
 
   const tenancyType = watch("tenancyType");
@@ -77,15 +83,37 @@ export default function QuoteFormPage() {
   };
 
   const onSubmit = async (data: QuoteFormData) => {
+    if (isSubmitting) return;
+
     setIsSubmitting(true);
+    setSubmitError(null);
+
     try {
-      const res = await fetch("/api/leads", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+      const result = await submitLeadRequest({
+        ...data,
+        ...tracking,
+        formSource: "quote-form",
       });
-      if (res.ok) setIsSubmitted(true);
-    } catch { /* silent */ } finally { setIsSubmitting(false); }
+
+      if (result.ok) {
+        // Only swap to the success state once the lead has actually been sent.
+        setIsSubmitted(true);
+        return;
+      }
+
+      // Surface server-side validation on the field that caused it, and keep
+      // the form intact so the visitor can correct and retry.
+      for (const [field, messages] of Object.entries(result.fieldErrors ?? {})) {
+        const message = Array.isArray(messages) ? messages[0] : undefined;
+        if (message) {
+          setError(field as keyof QuoteFormData, { type: "server", message });
+        }
+      }
+
+      setSubmitError(result.message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const canProceed = (s: number): boolean => {
@@ -146,6 +174,20 @@ export default function QuoteFormPage() {
           </div>
 
           <form onSubmit={handleSubmit(onSubmit)}>
+            {/* Hidden anti-spam field: visually hidden via the `sr-only`
+                utility already used by the radio inputs below, never announced
+                to assistive tech and skipped by tab order. Real visitors leave
+                it empty; anything submitted in it is rejected server-side. */}
+            <div className="sr-only" aria-hidden="true">
+              <label htmlFor="website">Website</label>
+              <input
+                type="text"
+                id="website"
+                tabIndex={-1}
+                autoComplete="off"
+                {...register("website")}
+              />
+            </div>
             <div className="bg-white rounded-2xl shadow-lg border border-slate-100 p-6 md:p-8 min-h-[350px]">
               <AnimatePresence mode="wait">
                 {step === 1 && (
@@ -226,6 +268,16 @@ export default function QuoteFormPage() {
                 )}
               </AnimatePresence>
             </div>
+
+            {submitError && (
+              <p
+                role="alert"
+                className="error-text flex items-center gap-1 mt-4 justify-end"
+              >
+                <AlertCircle className="h-4 w-4" />
+                {submitError}
+              </p>
+            )}
 
             <div className="flex justify-between mt-6">
               {step > 1 ? <button type="button" onClick={() => setStep(step - 1)} className="flex items-center gap-2 px-6 py-3 text-navy-600 hover:text-navy-900 font-semibold"><ChevronLeft className="h-5 w-5" />Back</button> : <div />}

@@ -17,6 +17,8 @@ import {
   HardHat,
 } from "lucide-react";
 import { leadFormSchema, type LeadFormData } from "@/lib/validations";
+import { submitLeadRequest } from "@/lib/submitLead";
+import { useLeadTracking } from "@/lib/useLeadTracking";
 
 const tenancyOptions = [
   {
@@ -65,18 +67,22 @@ export default function EligibilityForm() {
   const [currentStep, setCurrentStep] = useState(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const tracking = useLeadTracking();
 
   const {
     register,
     handleSubmit,
     watch,
     setValue,
+    setError,
     formState: { errors },
   } = useForm<LeadFormData>({
     resolver: zodResolver(leadFormSchema),
     defaultValues: {
       disrepairIssues: [],
       gdprConsent: undefined as unknown as true,
+      website: "",
     },
   });
 
@@ -92,19 +98,34 @@ export default function EligibilityForm() {
   };
 
   const onSubmit = async (data: LeadFormData) => {
+    if (isSubmitting) return;
+
     setIsSubmitting(true);
+    setSubmitError(null);
+
     try {
-      const response = await fetch("/api/leads", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
+      const result = await submitLeadRequest({
+        ...data,
+        ...tracking,
+        formSource: "homepage-eligibility-form",
       });
 
-      if (response.ok) {
+      if (result.ok) {
+        // Only swap to the success state once the lead has actually been sent.
         setIsSubmitted(true);
+        return;
       }
-    } catch {
-      // Handle error silently
+
+      // Surface server-side validation on the field that caused it, and keep
+      // the form intact so the visitor can correct and retry.
+      for (const [field, messages] of Object.entries(result.fieldErrors ?? {})) {
+        const message = Array.isArray(messages) ? messages[0] : undefined;
+        if (message) {
+          setError(field as keyof LeadFormData, { type: "server", message });
+        }
+      }
+
+      setSubmitError(result.message);
     } finally {
       setIsSubmitting(false);
     }
@@ -197,6 +218,20 @@ export default function EligibilityForm() {
         </div>
 
         <form onSubmit={handleSubmit(onSubmit)}>
+          {/* Hidden anti-spam field: visually hidden via the same `sr-only`
+              utility already used by the radio inputs above, never announced
+              to assistive tech and skipped by tab order. Real visitors leave
+              it empty; anything submitted in it is rejected server-side. */}
+          <div className="sr-only" aria-hidden="true">
+            <label htmlFor="website">Website</label>
+            <input
+              type="text"
+              id="website"
+              tabIndex={-1}
+              autoComplete="off"
+              {...register("website")}
+            />
+          </div>
           <div className="bg-white rounded-2xl shadow-lg border border-slate-100 p-6 md:p-8 min-h-[400px]">
             <AnimatePresence mode="wait">
               {/* Step 1: Tenancy Type */}
@@ -507,6 +542,16 @@ export default function EligibilityForm() {
               )}
             </AnimatePresence>
           </div>
+
+          {submitError && (
+            <p
+              role="alert"
+              className="error-text flex items-center gap-1 mt-4 justify-end"
+            >
+              <AlertCircle className="h-4 w-4" />
+              {submitError}
+            </p>
+          )}
 
           {/* Navigation */}
           <div className="flex justify-between mt-6">

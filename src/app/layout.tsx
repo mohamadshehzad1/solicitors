@@ -1,5 +1,6 @@
 ﻿import type { Metadata } from "next";
 import "./globals.css";
+import { LEAD_TRACKING_BOOTSTRAP_SCRIPT } from "@/lib/leadTracking";
 
 export const metadata: Metadata = {
   title: {
@@ -155,6 +156,9 @@ export default function RootLayout({
           type="application/ld+json"
           dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationSchema) }}
         />
+        {/* Stores first-touch UTM / click parameters for the session so lead
+            submissions can be attributed. Renders nothing. */}
+        <script dangerouslySetInnerHTML={{ __html: LEAD_TRACKING_BOOTSTRAP_SCRIPT }} />
       </head>
       <body className="bg-slate-50 text-navy-900 antialiased">
         {children}
